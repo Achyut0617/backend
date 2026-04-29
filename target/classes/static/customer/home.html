@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Customer Dashboard - MultiVendor</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Customer Dashboard</h1>
+        <nav>
+            <a href="#" onclick="logout('customer')">Logout</a>
+        </nav>
+    </header>
+
+    <div class="container">
+        <!-- Booking Section -->
+        <div class="card">
+            <h2>Book a Service</h2>
+            
+            <div class="form-group">
+                <label>1. Select Service Category:</label>
+                <select id="categorySelect" class="form-control" onchange="fetchVendors()">
+                    <option value="">Loading...</option>
+                </select>
+            </div>
+
+            <!-- Vendor Selection Bar -->
+            <div id="vendorSelectionArea" class="hidden">
+                <label>2. Select Available Vendor:</label>
+                <div id="vendorList" class="grid-2"></div>
+            </div>
+
+            <!-- Booking Details Form -->
+            <div id="bookingFormArea" class="hidden" style="margin-top: 1.5rem; border-top: 1px solid #eee; padding-top: 1rem;">
+                <label>3. Appointment Details:</label>
+                <form id="bookForm">
+                    <input type="hidden" id="selectedServiceId">
+                    <div class="form-group">
+                        <label>Date & Time:</label>
+                        <input type="datetime-local" id="bookTime" class="form-control" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Service Address:</label>
+                        <input type="text" id="bookAddress" class="form-control" placeholder="123 Main St" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Problem Description (Notes for Vendor):</label>
+                        <textarea id="bookNotes" class="form-control" rows="3" placeholder="Describe what you need..." required></textarea>
+                    </div>
+                    <button type="submit" class="btn" style="background: green; font-size: 1.1rem; padding: 0.75rem 1.5rem;">Send Request to Vendor</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>My Bookings</h2>
+            <div id="bookingsBox">Loading bookings...</div>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+    <script>
+        checkAuth('customer');
+
+        async function init() {
+            try {
+                // 1. Load Categories
+                const cats = await apiCall('/api/customer/categories', 'GET');
+                const catSelect = document.getElementById('categorySelect');
+                catSelect.innerHTML = '<option value="">-- Choose a Category --</option>';
+                cats.forEach(c => {
+                    catSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+                });
+                
+                // 2. Set min datetime to now
+                const now = new Date();
+                now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+                document.getElementById('bookTime').min = now.toISOString().slice(0,16);
+
+                loadBookings();
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function fetchVendors() {
+            const catId = document.getElementById('categorySelect').value;
+            const vendorArea = document.getElementById('vendorSelectionArea');
+            const formArea = document.getElementById('bookingFormArea');
+            const vendorList = document.getElementById('vendorList');
+            
+            formArea.classList.add('hidden');
+            
+            if (!catId) {
+                vendorArea.classList.add('hidden');
+                return;
+            }
+            
+            vendorArea.classList.remove('hidden');
+            vendorList.innerHTML = '<i>Searching available vendors...</i>';
+            
+            try {
+                const data = await apiCall(`/api/customer/services/search?categoryId=${catId}`, 'GET');
+                const services = data.content;
+                
+                if (services.length === 0) {
+                    vendorList.innerHTML = '<span style="color:red">No vendors available for this service right now.</span>';
+                    return;
+                }
+                
+                let html = '';
+                services.forEach(s => {
+                    html += `
+                        <div class="vendor-card" id="vc-${s.id}" onclick="selectVendor(${s.id})">
+                            <h3 style="margin:0 0 0.5rem 0">${s.vendorName}</h3>
+                            <p style="margin:0; color:#666;">${s.title}</p>
+                            <div class="vendor-price">₹${s.price} <span style="font-size:0.9rem;font-weight:normal;color:#666">(${s.unit})</span></div>
+                        </div>
+                    `;
+                });
+                vendorList.innerHTML = html;
+            } catch (err) {
+                vendorList.innerHTML = `<span class="error">Failed to load vendors: ${err.message}</span>`;
+            }
+        }
+
+        function selectVendor(serviceId) {
+            // Highlight selected card
+            document.querySelectorAll('.vendor-card').forEach(el => el.classList.remove('selected'));
+            document.getElementById(`vc-${serviceId}`).classList.add('selected');
+            
+            // Set ID and show form
+            document.getElementById('selectedServiceId').value = serviceId;
+            document.getElementById('bookingFormArea').classList.remove('hidden');
+        }
+
+        document.getElementById('bookForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const serviceId = document.getElementById('selectedServiceId').value;
+            const scheduledAt = document.getElementById('bookTime').value + ':00Z'; // simple UTC conversion
+            const serviceAddress = document.getElementById('bookAddress').value;
+            const notes = document.getElementById('bookNotes').value;
+
+            try {
+                await apiCall('/api/customer/bookings', 'POST', {
+                    serviceId, scheduledAt, serviceAddress, city: 'Local', notes
+                }, 'customer');
+                
+                alert('Request sent to vendor successfully!');
+                document.getElementById('bookForm').reset();
+                document.getElementById('bookingFormArea').classList.add('hidden');
+                document.getElementById('vendorSelectionArea').classList.add('hidden');
+                document.getElementById('categorySelect').value = '';
+                
+                loadBookings();
+            } catch (err) {
+                alert('Booking failed: ' + err.message);
+            }
+        });
+
+        async function loadBookings() {
+            try {
+                const data = await apiCall('/api/customer/bookings', 'GET', null, 'customer');
+                const bookings = data.content;
+                if (!bookings || bookings.length === 0) {
+                    document.getElementById('bookingsBox').innerHTML = '<p>You have no bookings.</p>';
+                    return;
+                }
+                let html = '<table><tr><th>Date</th><th>Vendor</th><th>Service</th><th>Amount</th><th>Status</th></tr>';
+                bookings.forEach(b => {
+                    html += `<tr>
+                        <td>${new Date(b.scheduledAt).toLocaleString()}</td>
+                        <td>${b.vendor.name}</td>
+                        <td>${b.service.title}</td>
+                        <td>₹${b.totalAmount}</td>
+                        <td><strong style="color:${b.status==='PENDING'?'orange':b.status==='ACCEPTED'?'blue':'green'}">${b.status}</strong></td>
+                    </tr>`;
+                });
+                html += '</table>';
+                document.getElementById('bookingsBox').innerHTML = html;
+            } catch (err) {
+                document.getElementById('bookingsBox').innerHTML = '<span class="error">Failed to load bookings</span>';
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>

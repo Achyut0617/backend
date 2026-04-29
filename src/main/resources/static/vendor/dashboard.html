@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vendor Dashboard - MultiVendor</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <header>
+        <h1>Vendor Dashboard</h1>
+        <nav>
+            <a href="#" onclick="logout('vendor')">Logout</a>
+        </nav>
+    </header>
+
+    <div class="container">
+        <!-- Add Service Form -->
+        <div class="card">
+            <h2>Add New Service</h2>
+            <form id="addServiceForm">
+                <div class="form-group">
+                    <label>Service Title:</label>
+                    <input type="text" id="serviceTitle" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Category:</label>
+                    <select id="serviceCategory" class="form-control" required>
+                        <option value="">Loading categories...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Price (₹):</label>
+                    <input type="number" id="servicePrice" class="form-control" required>
+                </div>
+                <div class="form-group">
+                    <label>Unit (e.g. 'per hr', 'per job'):</label>
+                    <input type="text" id="serviceUnit" class="form-control" value="per job" required>
+                </div>
+                <div class="form-group">
+                    <label>Description:</label>
+                    <input type="text" id="serviceDesc" class="form-control" required>
+                </div>
+                <button type="submit" class="btn">Add Service</button>
+            </form>
+        </div>
+
+        <!-- My Bookings -->
+        <div class="card">
+            <h2>Customer Requests (Bookings)</h2>
+            <div id="bookingsBox">Loading...</div>
+        </div>
+        
+        <!-- My Services -->
+        <div class="card">
+            <h2>My Listed Services</h2>
+            <div id="myServicesBox">Loading...</div>
+        </div>
+    </div>
+
+    <script src="/js/app.js"></script>
+    <script>
+        checkAuth('vendor');
+
+        async function loadCategories() {
+            try {
+                const data = await apiCall('/api/customer/categories', 'GET');
+                const catSelect = document.getElementById('serviceCategory');
+                catSelect.innerHTML = '<option value="">Select a Category</option>';
+                data.forEach(c => {
+                    catSelect.innerHTML += `<option value="${c.id}">${c.name}</option>`;
+                });
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function loadMyServices() {
+            try {
+                const data = await apiCall('/api/vendor/services', 'GET', null, 'vendor');
+                const services = data.content;
+                if (!services || services.length === 0) {
+                    document.getElementById('myServicesBox').innerHTML = '<p>No services listed.</p>';
+                    return;
+                }
+                let html = '<table><tr><th>Title</th><th>Category</th><th>Price</th><th>Action</th></tr>';
+                services.forEach(s => {
+                    html += `<tr>
+                        <td>${s.title}</td>
+                        <td>${s.categoryName}</td>
+                        <td>₹${s.price} (${s.unit})</td>
+                        <td><button class="btn" style="background:red" onclick="deleteService(${s.id})">Delete</button></td>
+                    </tr>`;
+                });
+                html += '</table>';
+                document.getElementById('myServicesBox').innerHTML = html;
+            } catch (err) {
+                document.getElementById('myServicesBox').innerHTML = '<span class="error">Failed to load services</span>';
+            }
+        }
+
+        document.getElementById('addServiceForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const payload = {
+                title: document.getElementById('serviceTitle').value,
+                description: document.getElementById('serviceDesc').value,
+                categoryId: document.getElementById('serviceCategory').value,
+                price: document.getElementById('servicePrice').value,
+                unit: document.getElementById('serviceUnit').value
+            };
+            try {
+                await apiCall('/api/vendor/services', 'POST', payload, 'vendor');
+                alert('Service added!');
+                document.getElementById('addServiceForm').reset();
+                loadMyServices();
+            } catch (err) {
+                alert('Failed: ' + err.message);
+            }
+        });
+
+        async function deleteService(id) {
+            if (!confirm('Delete this service?')) return;
+            try {
+                await apiCall(`/api/vendor/services/${id}`, 'DELETE', null, 'vendor');
+                loadMyServices();
+            } catch (err) {
+                alert('Failed: ' + err.message);
+            }
+        }
+
+        async function loadBookings() {
+            try {
+                const data = await apiCall('/api/vendor/bookings', 'GET', null, 'vendor');
+                const bookings = data.content;
+                if (!bookings || bookings.length === 0) {
+                    document.getElementById('bookingsBox').innerHTML = '<p>No customer requests.</p>';
+                    return;
+                }
+                let html = '<table><tr><th>Customer</th><th>Service</th><th>Notes</th><th>Status</th><th>Action</th></tr>';
+                bookings.forEach(b => {
+                    html += `<tr>
+                        <td>${b.customer.name}</td>
+                        <td>${b.service.title}</td>
+                        <td>${b.notes || ''}</td>
+                        <td><strong>${b.status}</strong></td>
+                        <td>`;
+                    if (b.status === 'PENDING') {
+                        html += `<button class="btn" onclick="actBooking(${b.id}, 'ACCEPT')">Accept</button> `;
+                        html += `<button class="btn" style="background:red" onclick="actBooking(${b.id}, 'REJECT')">Reject</button>`;
+                    } else if (b.status === 'ACCEPTED') {
+                        html += `<button class="btn" style="background:orange" onclick="actBooking(${b.id}, 'START')">Start</button>`;
+                    } else if (b.status === 'IN_PROGRESS') {
+                        html += `<button class="btn" style="background:green" onclick="actBooking(${b.id}, 'COMPLETE')">Complete</button>`;
+                    }
+                    html += `</td></tr>`;
+                });
+                html += '</table>';
+                document.getElementById('bookingsBox').innerHTML = html;
+            } catch (err) {
+                document.getElementById('bookingsBox').innerHTML = '<span class="error">Failed to load bookings</span>';
+            }
+        }
+
+        async function actBooking(id, action) {
+            try {
+                await apiCall(`/api/vendor/bookings/${id}/action`, 'POST', {action}, 'vendor');
+                alert('Updated');
+                loadBookings();
+            } catch (err) {
+                alert('Failed: ' + err.message);
+            }
+        }
+
+        loadCategories();
+        loadMyServices();
+        loadBookings();
+    </script>
+</body>
+</html>
